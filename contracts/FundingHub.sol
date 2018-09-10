@@ -1,69 +1,123 @@
 pragma solidity ^0.4.24;
 
-import "./Project.sol";
+contract CrowdFunder {
+    address public creator;
+    address public fundRecipient; 
+    uint public minimumToRaise; 
+    uint maximumToRaise;
+    string campaignUrl;
+    bool public test;
+    uint revenue;
+    
+    enum State {
+        Fundraising,
+        ExpiredRefund,
+        Successful
+    }
+    struct Contribution {
+        uint amount;
+        address contributor;
+    }
 
-contract FundingHub {
+    State public state = State.Fundraising; 
+    uint public totalRaised;
+    uint public raiseBy;
+    uint public completeAt;
+    Contribution[] contributions;
 
-    address public owner;
-    uint public numOfProjects;
-
-    mapping (uint => address) public projects;
-
-    event LogProjectCreated(uint id, string title, address addr, address creator);
-    event LogContributionSent(address projectAddress, address contributor, uint amount);
-
-    event LogFailure(string message);
-
-    modifier onlyOwner {
-        require(owner != msg.sender);
+    event LogFundingReceived(address addr, uint amount, uint currentTotal);
+    event LogWinnerPaid(address winnerAddress);
+    
+    modifier inState(State _state) {
+        require(state == _state);
         _;
     }
 
-    function FundingHub() {
-        owner = msg.sender;
-        numOfProjects = 0;
+    modifier isCreator() {
+        require(msg.sender == creator);
+        _;
     }
 
-    function createProject(uint _fundingGoal, uint _deadline, string _title) payable returns (Project projectAddress) {
-
-        if (_fundingGoal <= 0) {
-            LogFailure("Project funding goal must be greater than 0");
-            revert();
-        }
-
-        if (block.number >= _deadline) {
-            LogFailure("Project deadline must be greater than the current block");
-            revert();
-        }
-
-        Project p = new Project(_fundingGoal, _deadline, _title, msg.sender);
-        projects[numOfProjects] = p;
-        LogProjectCreated(numOfProjects, _title, p, msg.sender);
-        numOfProjects++;
-        return p;
+    modifier atEndOfLifecycle() {
+    require(((state == State.ExpiredRefund || state == State.Successful) && completeAt + 24 weeks < now));
+        _;
     }
 
-    function contribute(address _projectAddress) payable returns (bool successful) {
-
-        if (msg.value <= 0) {
-            LogFailure("Contributions must be greater than 0 wei");
-            revert();
-        }
-
-        Project deployedProject = Project(_projectAddress);
-
-        if (deployedProject.fundingHub() == address(0)) {
-            LogFailure("Project contract not found at address");
-            revert();
-        }
-
-        if (deployedProject.fund.value(msg.value)(msg.sender)) {
-            LogContributionSent(_projectAddress, msg.sender, msg.value);
-            return true;
-        } else {
-            LogFailure("Contribution did not send successfully");
-            return false;
-        }
+    function CrowdFunder(uint timeInHoursForFundraising, string _campaignUrl, address _fundRecipient, uint _minimumToRaise, uint _maximunToRaise) public {
+        creator = msg.sender;
+        fundRecipient = _fundRecipient;
+        campaignUrl = _campaignUrl;
+        minimumToRaise = _minimumToRaise * 1000000000000000000;
+        maximumToRaise = _maximunToRaise * 1000000000000000000;
+        raiseBy = now + (timeInHoursForFundraising * 1 days);
     }
+
+    function contribute() public payable inState(State.Fundraising) returns(uint256 id) {
+        contributions.push(
+            Contribution({
+                amount: msg.value,
+                contributor: msg.sender
+            }) 
+        );
+        totalRaised += msg.value;
+
+        LogFundingReceived(msg.sender, msg.value, totalRaised);
+        checkIfFundingCompleteOrExpired();
+        return (contributions.length - 1);
+    }
+
+    function checkIfFundingCompleteOrExpired() public returns (bool){
+        if (totalRaised >= maximumToRaise) {
+            state = State.Successful;
+        
+        }else if (totalRaised >=minimumToRaise && totalRaised <= maximumToRaise && now < raiseBy)
+        {
+            
+        }
+        else if (totalRaised >=minimumToRaise && totalRaised <= maximumToRaise && now > raiseBy)
+        {
+            state = State.Successful;
+        }
+        else if ( now > raiseBy && totalRaised < minimumToRaise)  {
+            state = State.ExpiredRefund;
+            for(uint id = 0; id <= contributions.length -1; id ++){
+            getRefund(id);
+            }
+            totalRaised = 0;
+        }
+        
+        completeAt = now;
+        return test;
+    }
+
+    function payOut() public inState(State.Successful){
+        fundRecipient.transfer(this.balance);
+        LogWinnerPaid(fundRecipient);
+    }
+
+    function getRefund(uint256 id) inState(State.ExpiredRefund) public {
+        uint256 amountToRefund = contributions[id].amount;
+        
+        contributions[id].contributor.transfer(amountToRefund);
+        contributions[id].amount = 0;
+    }
+    
+    function payback() public payable {
+        require(msg.sender == creator);
+        uint amountpayback = msg.value;
+        
+        for (uint num = 0; num <= contributions.length -1; num ++)
+        {
+        uint money = contributions[num].amount + (revenue);
+        contributions[num].contributor.transfer(money);
+        contributions[num].amount = 0;
+        }
+        totalRaised = 0;
+    }
+
+    function removeContract() public isCreator() atEndOfLifecycle(){
+        selfdestruct(msg.sender);
+    }
+    
 
 }
